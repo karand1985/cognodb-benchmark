@@ -1,12 +1,4 @@
-package ai.wexa.benchmark.benchmark;
-
-import ai.wexa.benchmark.config.EnvConfig;
-import ai.wexa.benchmark.loader.CognoDBLoader;
-import ai.wexa.benchmark.model.BenchmarkResult;
-import org.HdrHistogram.Histogram;
-import org.neo4j.driver.*;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+package ai.graphdb.benchmark.benchmark;
 
 import java.nio.file.Path;
 import java.time.Instant;
@@ -14,8 +6,24 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+
+import org.HdrHistogram.Histogram;
+import org.neo4j.driver.AuthTokens;
+import org.neo4j.driver.Config;
+import org.neo4j.driver.Driver;
+import org.neo4j.driver.GraphDatabase;
+import org.neo4j.driver.Session;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import ai.graphdb.benchmark.config.EnvConfig;
+import ai.graphdb.benchmark.loader.CognoDBLoader;
+import ai.graphdb.benchmark.model.BenchmarkResult;
 
 /**
  * Benchmarks CognoDB Cloud on all 6 required workloads.

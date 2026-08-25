@@ -1,12 +1,4 @@
-package ai.wexa.benchmark.benchmark;
-
-import ai.wexa.benchmark.config.EnvConfig;
-import ai.wexa.benchmark.loader.ArangoDBLoader;
-import ai.wexa.benchmark.model.BenchmarkResult;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.HdrHistogram.Histogram;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+package ai.graphdb.benchmark.benchmark;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -14,9 +6,26 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Path;
 import java.time.Instant;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicLong;
+
+import org.HdrHistogram.Histogram;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import ai.graphdb.benchmark.config.EnvConfig;
+import ai.graphdb.benchmark.loader.ArangoDBLoader;
+import ai.graphdb.benchmark.model.BenchmarkResult;
 
 /**
  * Benchmarks ArangoDB Community Edition on all 6 required workloads.

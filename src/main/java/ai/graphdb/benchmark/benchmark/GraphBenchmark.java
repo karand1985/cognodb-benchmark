@@ -1,9 +1,9 @@
-package ai.wexa.benchmark.benchmark;
-
-import ai.wexa.benchmark.model.BenchmarkResult;
+package ai.graphdb.benchmark.benchmark;
 
 import java.nio.file.Path;
 import java.util.List;
+
+import ai.graphdb.benchmark.model.BenchmarkResult;
 
 /**
  * Contract that every database benchmark implementation must satisfy.

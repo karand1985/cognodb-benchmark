@@ -1,4 +1,4 @@
-package ai.wexa.benchmark.config;
+package ai.graphdb.benchmark.config;
 
 import io.github.cdimascio.dotenv.Dotenv;
 import io.github.cdimascio.dotenv.DotenvException;
@@ -42,9 +42,16 @@ public class EnvConfig {
     public String neo4jAuraPassword() { return require("NEO4J_AURA_PASSWORD"); }
 
     // -------------------------------------------------------------------------
-    // FalkorDB (self-hosted Docker, Bolt-compatible)
+    // FalkorDB (self-hosted Docker — Redis RESP protocol, port 6379)
+    //
+    // FalkorDB is a Redis module: the native protocol is Redis RESP on port 6379,
+    // NOT Bolt on 7687.  FALKORDB_URI is kept for reference but is no longer used
+    // to open a Bolt connection.  Use FALKORDB_HOST / FALKORDB_PORT instead.
     // -------------------------------------------------------------------------
-    public String falkorDbUri()      { return require("FALKORDB_URI"); }
+    /** Kept for backward compatibility; not used to open a Bolt connection. */
+    public String falkorDbUri()      { return getOrDefault("FALKORDB_URI", "redis://localhost:6379"); }
+    public String falkorDbHost()     { return getOrDefault("FALKORDB_HOST", "localhost"); }
+    public int    falkorDbPort()     { return Integer.parseInt(getOrDefault("FALKORDB_PORT", "6379")); }
     public String falkorDbUser()     { return getOrDefault("FALKORDB_USER", "falkordb"); }
     public String falkorDbPassword() { return getOrDefault("FALKORDB_PASSWORD", ""); }
 

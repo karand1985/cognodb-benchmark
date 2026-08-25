@@ -1,10 +1,4 @@
-package ai.wexa.benchmark.report;
-
-import ai.wexa.benchmark.model.BenchmarkResult;
-import org.apache.commons.csv.CSVFormat;
-import org.apache.commons.csv.CSVPrinter;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+package ai.graphdb.benchmark.report;
 
 import java.io.FileWriter;
 import java.io.IOException;
@@ -13,6 +7,13 @@ import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+
+import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVPrinter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import ai.graphdb.benchmark.model.BenchmarkResult;
 
 /**
  * Writes BenchmarkResult objects to a CSV file under the results/ directory.

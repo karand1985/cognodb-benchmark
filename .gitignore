@@ -29,3 +29,5 @@ Thumbs.db
 # Results are committed for transparency
 # (uncomment to exclude)
 # results/
+/bin/
+/.settings/

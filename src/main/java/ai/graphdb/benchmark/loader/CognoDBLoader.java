@@ -1,4 +1,4 @@
-package ai.wexa.benchmark.loader;
+package ai.graphdb.benchmark.loader;
 
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVRecord;

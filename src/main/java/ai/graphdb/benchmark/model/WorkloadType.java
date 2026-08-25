@@ -1,4 +1,4 @@
-package ai.wexa.benchmark.model;
+package ai.graphdb.benchmark.model;
 
 /**
  * All benchmark workload categories required by the assignment.

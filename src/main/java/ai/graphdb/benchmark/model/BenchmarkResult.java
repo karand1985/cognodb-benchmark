@@ -1,4 +1,4 @@
-package ai.wexa.benchmark.model;
+package ai.graphdb.benchmark.model;
 
 /**
  * Holds the result of one workload measurement for one database.

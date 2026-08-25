@@ -1,83 +1,79 @@
-package ai.wexa.benchmark.benchmark;
-
-import ai.wexa.benchmark.config.EnvConfig;
-import ai.wexa.benchmark.loader.FalkorDBLoader;
-import ai.wexa.benchmark.model.BenchmarkResult;
-import org.HdrHistogram.Histogram;
-import org.neo4j.driver.*;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+package ai.graphdb.benchmark.benchmark;
 
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicLong;
 
+import org.HdrHistogram.Histogram;
+import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import ai.graphdb.benchmark.config.EnvConfig;
+import ai.graphdb.benchmark.loader.FalkorDBLoader;
+import ai.graphdb.benchmark.model.BenchmarkResult;
+import redis.clients.jedis.Connection;
+import redis.clients.jedis.JedisPooled;
+
 /**
- * Benchmarks FalkorDB on all 6 required workloads.
+ * Benchmarks FalkorDB on all 6 required workloads using the native Redis RESP
+ * protocol via Jedis 4.3.x JedisPooled.
  *
- * FalkorDB is a Redis-backed graph database that speaks the Bolt protocol,
- * making it compatible with the Neo4j Java driver. Key characteristics:
+ * Why Jedis?
+ * ----------
+ * FalkorDB self-hosted (falkordb/falkordb:latest) runs Redis on port 6379.
+ * It does NOT include a Bolt proxy on port 7687, so the Neo4j Java driver
+ * fails with "Connection to the database terminated" during the Bolt handshake.
+ * Jedis 4.3.2 — the last 4.x release with the RedisGraph graph command module —
+ * provides graphQuery / graphDelete / graphList that work directly against
+ * FalkorDB 4.x (a fully-compatible RedisGraph fork).
  *
- *  - Memory-resident graph engine (like Redis) — expect very low latency.
- *  - All queries are scoped to a named graph ("pokec") via SessionConfig.
- *  - Cypher dialect is mostly Neo4j-compatible with minor differences:
- *    * CREATE INDEX has no IF NOT EXISTS in older versions.
- *    * Variable-length patterns ([*1..3]) work but may behave differently.
- *    * CALL {} (subquery) is not supported — use inline MATCH chains.
- *  - Self-hosted via Docker with RAM cap to match free-tier resources:
- *    docker run -p 7687:7687 --memory=256m falkordb/falkordb:latest
- *  - Resource cap documented in instanceSpec for fair comparison.
+ * JedisPooled (extends UnifiedJedis) is thread-safe, manages its own connection
+ * pool, and exposes all graph commands.  The classic Jedis class does NOT have
+ * graph commands in 4.x; JedisPooled is the correct class to use.
  *
- * Setup (run before benchmarking):
- *   docker run -d --name falkordb -p 7687:7687 --memory=256m \
- *     falkordb/falkordb:latest
+ * Connection: FALKORDB_HOST (default: localhost) / FALKORDB_PORT (default: 6379).
  */
 public class FalkorDBBenchmark implements GraphBenchmark {
 
     private static final Logger log = LoggerFactory.getLogger(FalkorDBBenchmark.class);
     private static final long MAX_LATENCY_MS = 3_600_000L;
 
-    private final Driver driver;
-    private final EnvConfig config;
+    private final JedisPooled jedis;
+    private final EnvConfig   config;
 
     public FalkorDBBenchmark(EnvConfig config) {
         this.config = config;
 
-        // FalkorDB typically has no auth by default when self-hosted
+        String host     = config.falkorDbHost();
+        int    port     = config.falkorDbPort();
         String password = config.falkorDbPassword();
-        AuthToken auth = (password == null || password.isBlank())
-            ? AuthTokens.none()
-            : AuthTokens.basic(config.falkorDbUser(), password);
 
-        this.driver = GraphDatabase.driver(
-            config.falkorDbUri(),
-            auth,
-            Config.builder()
-                .withMaxConnectionPoolSize(50)
-                .withConnectionAcquisitionTimeout(30, TimeUnit.SECONDS)
-                .build()
-        );
+        // JedisPooled constructors require GenericObjectPoolConfig<Connection>,
+        // NOT the legacy JedisPoolConfig (which is GenericObjectPoolConfig<Object>).
+        GenericObjectPoolConfig<Connection> poolConfig = new GenericObjectPoolConfig<>();
+        poolConfig.setMaxTotal(60);           // enough for concurrency level 40 + overhead
+        poolConfig.setMaxWaitMillis(30_000L);
+        poolConfig.setTestOnBorrow(false);
+        poolConfig.setTestOnReturn(false);
+
+        if (password != null && !password.isBlank()) {
+            this.jedis = new JedisPooled(poolConfig, host, port, 30_000, password);
+        } else {
+            this.jedis = new JedisPooled(poolConfig, host, port, 30_000);
+        }
+
+        log.info("[FalkorDB] JedisPooled created — {}:{}", host, port);
     }
 
     @Override
-    public String databaseName() {
-        return "FalkorDB";
-    }
-
-    // -------------------------------------------------------------------------
-    // Session helper — all FalkorDB queries are scoped to named graph "pokec"
-    // -------------------------------------------------------------------------
-
-    private SessionConfig graphSession() {
-        return SessionConfig.builder()
-            .withDatabase(FalkorDBLoader.GRAPH_NAME)
-            .build();
-    }
+    public String databaseName() { return "FalkorDB"; }
 
     // -------------------------------------------------------------------------
     // Connection check
@@ -85,9 +81,9 @@ public class FalkorDBBenchmark implements GraphBenchmark {
 
     @Override
     public void verifyConnection() {
-        try (Session session = driver.session(graphSession())) {
-            session.run("RETURN 1").consume();
-        }
+        // graphList() returns existing graph names and is always safe to call.
+        // It verifies both the Redis connection and FalkorDB module availability.
+        jedis.graphList();
     }
 
     // -------------------------------------------------------------------------
@@ -96,7 +92,7 @@ public class FalkorDBBenchmark implements GraphBenchmark {
 
     @Override
     public BenchmarkResult benchmarkIngest(Path nodesCsv, Path edgesCsv) {
-        FalkorDBLoader loader = new FalkorDBLoader(driver);
+        FalkorDBLoader loader = new FalkorDBLoader(jedis);
         long startMs = System.currentTimeMillis();
 
         long[] counts;
@@ -106,9 +102,9 @@ public class FalkorDBBenchmark implements GraphBenchmark {
             throw new RuntimeException("FalkorDB ingest failed: " + e.getMessage(), e);
         }
 
-        long totalMs    = System.currentTimeMillis() - startMs;
-        long nodes      = counts[0];
-        long rels       = counts[1];
+        long   totalMs  = System.currentTimeMillis() - startMs;
+        long   nodes    = counts[0];
+        long   rels     = counts[1];
         double totalSec = totalMs / 1000.0;
 
         BenchmarkResult r = BenchmarkResult.ingest(
@@ -137,10 +133,10 @@ public class FalkorDBBenchmark implements GraphBenchmark {
         Histogram histogram = new Histogram(MAX_LATENCY_MS, 3);
 
         for (int i = 0; i < warmupIter; i++) {
-            runTimedQuery(query, Map.of("id", nodes.get(i % nodes.size())));
+            runTimedQuery(query, nodes.get(i % nodes.size()));
         }
         for (int i = 0; i < measureIter; i++) {
-            long ms = runTimedQuery(query, Map.of("id", nodes.get(i % nodes.size())));
+            long ms = runTimedQuery(query, nodes.get(i % nodes.size()));
             histogram.recordValue(Math.max(ms, 1));
         }
 
@@ -150,22 +146,12 @@ public class FalkorDBBenchmark implements GraphBenchmark {
     }
 
     private String buildHopQuery(int hops) {
-        // FalkorDB supports explicit MATCH chains — same as CognoDB/Neo4j.
-        // Variable-length patterns work but explicit chains are more portable.
         return switch (hops) {
-            case 1 -> """
-                MATCH (u:User {id: $id})-[:FRIENDS_WITH]->(neighbor:User)
-                RETURN count(neighbor) AS cnt
-                """;
-            case 2 -> """
-                MATCH (u:User {id: $id})-[:FRIENDS_WITH]->(:User)-[:FRIENDS_WITH]->(neighbor:User)
-                RETURN count(neighbor) AS cnt
-                """;
-            case 3 -> """
-                MATCH (u:User {id: $id})-[:FRIENDS_WITH]->(:User)
-                      -[:FRIENDS_WITH]->(:User)-[:FRIENDS_WITH]->(neighbor:User)
-                RETURN count(neighbor) AS cnt
-                """;
+            case 1 -> "MATCH (u:User {id:$id})-[:FRIENDS_WITH]->(n:User) RETURN count(n) AS cnt";
+            case 2 -> "MATCH (u:User {id:$id})-[:FRIENDS_WITH]->(:User)" +
+                      "-[:FRIENDS_WITH]->(n:User) RETURN count(n) AS cnt";
+            case 3 -> "MATCH (u:User {id:$id})-[:FRIENDS_WITH]->(:User)" +
+                      "-[:FRIENDS_WITH]->(:User)-[:FRIENDS_WITH]->(n:User) RETURN count(n) AS cnt";
             default -> throw new IllegalArgumentException("Unsupported hop depth: " + hops);
         };
     }
@@ -177,17 +163,17 @@ public class FalkorDBBenchmark implements GraphBenchmark {
     @Override
     public BenchmarkResult benchmarkPointLookup(List<String> nodeIds,
                                                  int warmupIter, int measureIter) {
-        String query = "MATCH (u:User {id: $id}) RETURN u.id, u.age, u.region LIMIT 1";
+        String query = "MATCH (u:User {id:$id}) RETURN u.id, u.age, u.region LIMIT 1";
         List<String> ids = new ArrayList<>(nodeIds);
         Collections.shuffle(ids);
 
         Histogram histogram = new Histogram(MAX_LATENCY_MS, 3);
 
         for (int i = 0; i < warmupIter; i++) {
-            runTimedQuery(query, Map.of("id", ids.get(i % ids.size())));
+            runTimedQuery(query, ids.get(i % ids.size()));
         }
         for (int i = 0; i < measureIter; i++) {
-            long ms = runTimedQuery(query, Map.of("id", ids.get(i % ids.size())));
+            long ms = runTimedQuery(query, ids.get(i % ids.size()));
             histogram.recordValue(Math.max(ms, 1));
         }
 
@@ -203,20 +189,13 @@ public class FalkorDBBenchmark implements GraphBenchmark {
 
     @Override
     public BenchmarkResult benchmarkFilteredLookup(int warmupIter, int measureIter) {
-        String query = """
-            MATCH (u:User)
-            WHERE u.age >= 25 AND u.age <= 35
-            RETURN u.id, u.region
-            LIMIT 100
-            """;
+        String query = "MATCH (u:User) WHERE u.age >= 25 AND u.age <= 35 " +
+                       "RETURN u.id, u.region LIMIT 100";
         Histogram histogram = new Histogram(MAX_LATENCY_MS, 3);
 
-        for (int i = 0; i < warmupIter; i++) {
-            runTimedQuery(query, Map.of());
-        }
+        for (int i = 0; i < warmupIter; i++) { runTimedQueryNoParam(query); }
         for (int i = 0; i < measureIter; i++) {
-            long ms = runTimedQuery(query, Map.of());
-            histogram.recordValue(Math.max(ms, 1));
+            histogram.recordValue(Math.max(runTimedQueryNoParam(query), 1));
         }
 
         BenchmarkResult r = fromHistogram(databaseName(), "FILTERED_LOOKUP", histogram, measureIter);
@@ -232,19 +211,12 @@ public class FalkorDBBenchmark implements GraphBenchmark {
 
     @Override
     public BenchmarkResult benchmarkAggregation(int warmupIter, int measureIter) {
-        String query = """
-            MATCH (u:User)
-            RETURN u.region AS region, count(u) AS cnt
-            ORDER BY cnt DESC
-            """;
+        String query = "MATCH (u:User) RETURN u.region AS region, count(u) AS cnt ORDER BY cnt DESC";
         Histogram histogram = new Histogram(MAX_LATENCY_MS, 3);
 
-        for (int i = 0; i < warmupIter; i++) {
-            runTimedQuery(query, Map.of());
-        }
+        for (int i = 0; i < warmupIter; i++) { runTimedQueryNoParam(query); }
         for (int i = 0; i < measureIter; i++) {
-            long ms = runTimedQuery(query, Map.of());
-            histogram.recordValue(Math.max(ms, 1));
+            histogram.recordValue(Math.max(runTimedQueryNoParam(query), 1));
         }
 
         BenchmarkResult r = fromHistogram(databaseName(), "AGGREGATION", histogram, measureIter);
@@ -261,8 +233,8 @@ public class FalkorDBBenchmark implements GraphBenchmark {
     @Override
     public BenchmarkResult benchmarkMixedConcurrent(int concurrency, int durationSec,
                                                      List<String> startNodeIds) {
-        String readQuery  = "MATCH (u:User {id: $id})-[:FRIENDS_WITH]->(n) RETURN count(n) AS cnt";
-        String writeQuery = "MATCH (u:User {id: $id}) SET u.age = u.age + 1 RETURN u.id";
+        String readQuery  = "MATCH (u:User {id:$id})-[:FRIENDS_WITH]->(n) RETURN count(n) AS cnt";
+        String writeQuery = "MATCH (u:User {id:$id}) SET u.age = u.age + 1 RETURN u.id";
 
         AtomicLong opsCompleted = new AtomicLong(0);
         List<String> ids = new ArrayList<>(startNodeIds);
@@ -276,10 +248,10 @@ public class FalkorDBBenchmark implements GraphBenchmark {
             futures.add(executor.submit(() -> {
                 int localOps = 0;
                 while (System.currentTimeMillis() < endTime) {
-                    String id = ids.get((localOps + threadIdx) % ids.size());
+                    String  id     = ids.get((localOps + threadIdx) % ids.size());
                     boolean isRead = (localOps % 5 != 0); // 80% reads
                     try {
-                        runTimedQuery(isRead ? readQuery : writeQuery, Map.of("id", id));
+                        runTimedQuery(isRead ? readQuery : writeQuery, id);
                         opsCompleted.incrementAndGet();
                     } catch (Exception e) {
                         log.debug("[FalkorDB] Mixed workload error: {}", e.getMessage());
@@ -308,18 +280,28 @@ public class FalkorDBBenchmark implements GraphBenchmark {
 
     @Override
     public void close() {
-        if (driver != null) driver.close();
+        if (jedis != null) jedis.close();
     }
 
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
 
-    private long runTimedQuery(String cypher, Map<String, Object> params) {
+    /**
+     * Runs a query that takes a single $id parameter by inlining the value.
+     * Node IDs are integer strings from our own dataset — no injection risk.
+     */
+    private long runTimedQuery(String cypher, String nodeId) {
+        String query = cypher.replace("$id", "'" + nodeId + "'");
         long start = System.currentTimeMillis();
-        try (Session session = driver.session(graphSession())) {
-            session.run(cypher, params).consume();
-        }
+        jedis.graphQuery(FalkorDBLoader.GRAPH_NAME, query);
+        return System.currentTimeMillis() - start;
+    }
+
+    /** Runs a parameterless query (filtered lookup, aggregation). */
+    private long runTimedQueryNoParam(String cypher) {
+        long start = System.currentTimeMillis();
+        jedis.graphQuery(FalkorDBLoader.GRAPH_NAME, cypher);
         return System.currentTimeMillis() - start;
     }
 

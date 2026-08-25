@@ -1,10 +1,4 @@
-package ai.wexa.benchmark.report;
-
-import ai.wexa.benchmark.model.BenchmarkResult;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+package ai.graphdb.benchmark.report;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -14,6 +8,14 @@ import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+
+import ai.graphdb.benchmark.model.BenchmarkResult;
 
 /**
  * Writes BenchmarkResult objects to a pretty-printed JSON file

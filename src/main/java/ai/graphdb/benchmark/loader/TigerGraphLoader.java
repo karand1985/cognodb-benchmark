@@ -1,4 +1,4 @@
-package ai.wexa.benchmark.loader;
+package ai.graphdb.benchmark.loader;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.commons.csv.CSVFormat;

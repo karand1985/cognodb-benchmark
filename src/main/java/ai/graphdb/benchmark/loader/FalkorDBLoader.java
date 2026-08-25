@@ -1,13 +1,10 @@
-package ai.wexa.benchmark.loader;
+package ai.graphdb.benchmark.loader;
 
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVRecord;
-import org.neo4j.driver.Driver;
-import org.neo4j.driver.Session;
-import org.neo4j.driver.SessionConfig;
-import org.neo4j.driver.Values;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import redis.clients.jedis.JedisPooled;
 
 import java.io.FileReader;
 import java.io.Reader;
@@ -18,34 +15,37 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Loads the Pokec dataset into FalkorDB using batched Bolt writes.
+ * Loads the Pokec dataset into FalkorDB using the native Redis RESP protocol
+ * via Jedis 4.3.x JedisPooled (which retains the RedisGraph-compatible graph
+ * command module: graphQuery / graphDelete / graphList).
  *
- * FalkorDB notes:
- *  - FalkorDB is a Redis module that speaks the Bolt protocol (bolt://).
- *  - Data is scoped to a named graph — passed via SessionConfig database().
- *    The graph name is "pokec" throughout this benchmark.
- *  - FalkorDB Cypher is largely Neo4j-compatible but has some differences:
- *    * No IF NOT EXISTS on CREATE INDEX (omitted here for compatibility).
- *    * DETACH DELETE is supported.
- *    * UNWIND + CREATE for batched node creation works correctly.
- *  - Self-hosted via Docker: docker run -p 7687:7687 falkordb/falkordb:latest
- *  - Default credentials: no auth (or username=falkordb, empty password).
- *  - Batch size 500 is safe; FalkorDB is memory-resident so it handles it fast.
+ * Why Jedis instead of the Neo4j Bolt driver?
+ * -------------------------------------------
+ * FalkorDB is a Redis module. Its self-hosted Docker image
+ * (falkordb/falkordb:latest) runs Redis on port 6379 only — it does NOT ship
+ * a Bolt proxy on port 7687.  Connecting via the Neo4j Java driver therefore
+ * fails with "Connection to the database terminated" during the Bolt handshake.
+ *
+ * The correct approach is the Redis RESP protocol via Jedis 4.3.2 JedisPooled.
+ * JedisPooled manages its own thread-safe connection pool and exposes graph
+ * commands directly.  FalkorDB is a fully-compatible RedisGraph fork.
+ *
+ * Connection: redis://localhost:6379 (configurable via FALKORDB_HOST / FALKORDB_PORT).
  */
 public class FalkorDBLoader {
 
     private static final Logger log = LoggerFactory.getLogger(FalkorDBLoader.class);
-    private static final int    BATCH_SIZE  = 500;
-    static final         String GRAPH_NAME  = "pokec";
+    private static final int    BATCH_SIZE = 500;
+    public  static final String GRAPH_NAME = "pokec";
 
-    private final Driver driver;
+    private final JedisPooled jedis;
 
-    public FalkorDBLoader(Driver driver) {
-        this.driver = driver;
+    public FalkorDBLoader(JedisPooled jedis) {
+        this.jedis = jedis;
     }
 
     /**
-     * Clears the pokec graph, then loads nodes and edges.
+     * Clears the pokec graph then loads nodes and edges.
      *
      * @return long[2] — { nodesLoaded, edgesLoaded }
      */
@@ -59,30 +59,21 @@ public class FalkorDBLoader {
 
     // -------------------------------------------------------------------------
 
-    private SessionConfig graphSession() {
-        return SessionConfig.builder().withDatabase(GRAPH_NAME).build();
-    }
-
     private void clearGraph() {
         log.info("[FalkorDB] Clearing graph '{}'...", GRAPH_NAME);
-        try (Session session = driver.session(graphSession())) {
-            session.executeWrite(tx -> {
-                tx.run("MATCH (n) DETACH DELETE n");
-                return null;
-            });
+        try {
+            jedis.graphDelete(GRAPH_NAME);
+            log.info("[FalkorDB] Graph deleted.");
+        } catch (Exception e) {
+            // Graph may not exist yet on the first run — that is fine.
+            log.debug("[FalkorDB] graphDelete skipped (graph may not exist): {}", e.getMessage());
         }
-        log.info("[FalkorDB] Graph cleared.");
     }
 
     private void createIndex() {
         log.info("[FalkorDB] Creating index on User.id...");
-        try (Session session = driver.session(graphSession())) {
-            session.executeWrite(tx -> {
-                // FalkorDB index syntax — no IF NOT EXISTS keyword
-                tx.run("CREATE INDEX FOR (u:User) ON (u.id)");
-                return null;
-            });
-        }
+        // FalkorDB index syntax — no IF NOT EXISTS keyword
+        jedis.graphQuery(GRAPH_NAME, "CREATE INDEX FOR (u:User) ON (u.id)");
         log.info("[FalkorDB] Index created.");
     }
 
@@ -124,18 +115,21 @@ public class FalkorDBLoader {
         return total;
     }
 
+    /**
+     * Flushes one batch of nodes with a single inline CREATE statement.
+     * Inline literals avoid PARAMS serialisation complexity over RESP.
+     */
     private void flushNodeBatch(List<Map<String, Object>> batch) {
-        try (Session session = driver.session(graphSession())) {
-            session.executeWrite(tx -> {
-                tx.run(
-                    "UNWIND $batch AS row " +
-                    "CREATE (u:User {id: row.id, gender: row.gender, " +
-                    "                region: row.region, age: row.age})",
-                    Values.parameters("batch", batch)
-                );
-                return null;
-            });
+        StringBuilder sb = new StringBuilder("CREATE ");
+        for (int i = 0; i < batch.size(); i++) {
+            if (i > 0) sb.append(',');
+            Map<String, Object> row = batch.get(i);
+            sb.append("(:User {id:'").append(esc(row.get("id").toString()))
+              .append("',gender:'").append(esc(row.get("gender").toString()))
+              .append("',region:'").append(esc(row.get("region").toString()))
+              .append("',age:").append(row.get("age")).append("})");
         }
+        jedis.graphQuery(GRAPH_NAME, sb.toString());
     }
 
     private long loadEdges(Path edgesCsv) throws Exception {
@@ -174,21 +168,34 @@ public class FalkorDBLoader {
         return total;
     }
 
+    /**
+     * Flushes one batch of edges using UNWIND over an inline map-list literal.
+     * FalkorDB supports UNWIND with list-of-map literals in standard Cypher.
+     */
     private void flushEdgeBatch(List<Map<String, Object>> batch) {
-        try (Session session = driver.session(graphSession())) {
-            session.executeWrite(tx -> {
-                tx.run(
-                    "UNWIND $batch AS row " +
-                    "MATCH (src:User {id: row.src}), (dst:User {id: row.dst}) " +
-                    "CREATE (src)-[:FRIENDS_WITH]->(dst)",
-                    Values.parameters("batch", batch)
-                );
-                return null;
-            });
+        StringBuilder sb = new StringBuilder("UNWIND [");
+        for (int i = 0; i < batch.size(); i++) {
+            if (i > 0) sb.append(',');
+            Map<String, Object> row = batch.get(i);
+            sb.append("{src:'").append(esc(row.get("src").toString()))
+              .append("',dst:'").append(esc(row.get("dst").toString())).append("'}");
         }
+        sb.append("] AS row ")
+          .append("MATCH (src:User {id:row.src}),(dst:User {id:row.dst}) ")
+          .append("CREATE (src)-[:FRIENDS_WITH]->(dst)");
+        jedis.graphQuery(GRAPH_NAME, sb.toString());
     }
 
-    private int safeInt(String s) {
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
+    /** Escapes single-quotes and backslashes for inline Cypher string literals. */
+    private static String esc(String s) {
+        return s.replace("\\", "\\\\").replace("'", "\\'");
+    }
+
+    private static int safeInt(String s) {
         try { return Integer.parseInt(s.trim()); }
         catch (Exception e) { return 0; }
     }

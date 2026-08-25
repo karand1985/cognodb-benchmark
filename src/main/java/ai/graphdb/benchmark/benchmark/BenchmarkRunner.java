@@ -1,14 +1,15 @@
-package ai.wexa.benchmark.benchmark;
-
-import ai.wexa.benchmark.config.EnvConfig;
-import ai.wexa.benchmark.model.BenchmarkResult;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+package ai.graphdb.benchmark.benchmark;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import ai.graphdb.benchmark.config.EnvConfig;
+import ai.graphdb.benchmark.model.BenchmarkResult;
 
 /**
  * Orchestrates the full benchmark suite across every registered database.

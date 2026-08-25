@@ -1,18 +1,26 @@
-package ai.wexa.benchmark;
-
-import ai.wexa.benchmark.benchmark.*;
-import ai.wexa.benchmark.config.EnvConfig;
-import ai.wexa.benchmark.model.BenchmarkResult;
-import ai.wexa.benchmark.report.CsvReporter;
-import ai.wexa.benchmark.report.JsonReporter;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+package ai.graphdb.benchmark;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import ai.graphdb.benchmark.benchmark.ArangoDBBenchmark;
+import ai.graphdb.benchmark.benchmark.BenchmarkRunner;
+import ai.graphdb.benchmark.benchmark.CognoDBBenchmark;
+import ai.graphdb.benchmark.benchmark.FalkorDBBenchmark;
+import ai.graphdb.benchmark.benchmark.GraphBenchmark;
+import ai.graphdb.benchmark.benchmark.Neo4jAuraBenchmark;
+import ai.graphdb.benchmark.benchmark.TigerGraphBenchmark;
+import ai.graphdb.benchmark.config.EnvConfig;
+import ai.graphdb.benchmark.data.DataDownloader;
+import ai.graphdb.benchmark.model.BenchmarkResult;
+import ai.graphdb.benchmark.report.CsvReporter;
+import ai.graphdb.benchmark.report.JsonReporter;
 
 /**
  * Entry point for the Graph Database Cloud Benchmark.
@@ -47,6 +55,19 @@ public class Main {
 
         if (argList.contains("--help")) {
             printHelp();
+            System.exit(0);
+        }
+
+        // --download: run the Java dataset downloader then exit
+        // Works on Windows, Mac, Linux — no bash or chmod needed
+        if (argList.contains("--download")) {
+            Path dataDir = Paths.get(System.getProperty("user.dir")).resolve("data");
+            try {
+                new DataDownloader().run(dataDir);
+            } catch (Exception e) {
+                log.error("Dataset download failed: {}", e.getMessage(), e);
+                System.exit(1);
+            }
             System.exit(0);
         }
 
@@ -97,6 +118,8 @@ public class Main {
             log.error("Failed to write results: {}", e.getMessage(), e);
             System.exit(2);
         }
+        
+        return;
     }
 
     // -------------------------------------------------------------------------
@@ -116,11 +139,16 @@ public class Main {
             ? args.get(dbIdx + 1).toLowerCase()
             : "";
 
-        if (all || dbFilter.equals("cognodb"))    selected.add(new CognoDBBenchmark(config));
-        if (all || dbFilter.equals("neo4j"))      selected.add(new Neo4jAuraBenchmark(config));
-        if (all || dbFilter.equals("falkor"))     selected.add(new FalkorDBBenchmark(config));
-        if (all || dbFilter.equals("arango"))     selected.add(new ArangoDBBenchmark(config));
-        if (all || dbFilter.equals("tigergraph")) selected.add(new TigerGraphBenchmark(config));
+        // Active benchmark suite — 4 databases, all genuinely free, no trial expiry
+        if (all || dbFilter.equals("cognodb")) selected.add(new CognoDBBenchmark(config));
+        if (all || dbFilter.equals("neo4j"))   selected.add(new Neo4jAuraBenchmark(config));
+        if (all || dbFilter.equals("falkor"))  selected.add(new FalkorDBBenchmark(config));
+        if (all || dbFilter.equals("arango"))  selected.add(new ArangoDBBenchmark(config));
+
+        // TigerGraph is implemented (TigerGraphBenchmark / TigerGraphLoader) but excluded
+        // from --all: its free tier is credit-limited, not permanently free like the 4 above.
+        // Run manually if needed: java -jar benchmark.jar --db tigergraph
+        if (dbFilter.equals("tigergraph")) selected.add(new TigerGraphBenchmark(config));
 
         return selected;
     }
@@ -146,12 +174,13 @@ public class Main {
             Usage: java -jar target/cognodb-benchmark-1.0.0.jar [options]
 
             Options:
-              --all              Run all 5 databases (default if no --db given)
+              --download         Download and sample the Pokec dataset (run this first)
+              --all              Run all 4 active databases (default if no --db given)
               --db cognodb       Run CognoDB Cloud only
               --db neo4j         Run Neo4j AuraDB Free only
               --db falkor        Run FalkorDB only
               --db arango        Run ArangoDB only
-              --db tigergraph    Run TigerGraph Cloud only
+              --db tigergraph    Run TigerGraph only (excluded from --all; credit-limited tier)
               --help             Show this help
 
             Environment variables (see .env.example):
