@@ -44,6 +44,7 @@ public class FalkorDBBenchmark implements GraphBenchmark {
 
     private static final Logger log = LoggerFactory.getLogger(FalkorDBBenchmark.class);
     private static final long MAX_LATENCY_MS = 3_600_000L;
+    private static final int FALKOR_SOCKET_TIMEOUT_MS = 150_000; // 2.5 minutes
 
     private final JedisPooled jedis;
     private final EnvConfig   config;
@@ -64,9 +65,9 @@ public class FalkorDBBenchmark implements GraphBenchmark {
         poolConfig.setTestOnReturn(false);
 
         if (password != null && !password.isBlank()) {
-            this.jedis = new JedisPooled(poolConfig, host, port, 30_000, password);
+            this.jedis = new JedisPooled(poolConfig, host, port, FALKOR_SOCKET_TIMEOUT_MS, password);
         } else {
-            this.jedis = new JedisPooled(poolConfig, host, port, 30_000);
+            this.jedis = new JedisPooled(poolConfig, host, port, FALKOR_SOCKET_TIMEOUT_MS);
         }
 
         log.info("[FalkorDB] JedisPooled created — {}:{}", host, port);
