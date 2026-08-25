@@ -33,12 +33,12 @@ services:
 
   # ---------------------------------------------------------------------------
   # FalkorDB
-  # Redis-based graph database that speaks the Bolt protocol.
-  # Compatible with the Neo4j Java driver — just point it at bolt://localhost:7687
+  # Redis-based graph database.  The benchmark connects via the native Redis
+  # RESP protocol using Jedis 4.3.x (graphQuery / graphDelete / graphList).
   #
   # Image: falkordb/falkordb (official Docker Hub image)
-  # Port 7687: Bolt protocol (same as Neo4j)
-  # Port 6379: Redis protocol (not used in this benchmark)
+  # Port 6379: Redis / FalkorDB RESP protocol — used by the Java benchmark
+  # Port 7687: NOT exposed — the self-hosted image has no Bolt proxy on 7687
   #
   # Memory cap: 256 MB to match CognoDB c0 free tier.
   # CPU cap:    0.5 vCPU to match CognoDB c0 burstable tier.
@@ -47,8 +47,7 @@ services:
     image: falkordb/falkordb:latest
     container_name: falkordb-benchmark
     ports:
-      - "7687:7687"   # Bolt — used by Neo4j Java driver
-      - "6379:6379"   # Redis — exposed for optional redis-cli inspection
+      - "6379:6379"   # Redis RESP — used by Jedis / benchmark
     environment:
       # FalkorDB runs as Redis — set max memory to cap resource usage
       - REDIS_ARGS=--maxmemory 256mb --maxmemory-policy allkeys-lru
