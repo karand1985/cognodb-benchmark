@@ -1,0 +1,115 @@
+# =============================================================================
+# docker-compose.yml
+#
+# Spins up FalkorDB and ArangoDB locally for the benchmark suite.
+#
+# Resource caps are set to match the CognoDB Cloud free tier (c0):
+#   - 0.5 vCPU (burstable)
+#   - 256 MB RAM
+#   - 1 GB disk (volumes are capped below)
+#
+# This ensures a fair apples-to-apples comparison in the benchmark.
+# Document the advertised specs of every platform in your README.
+#
+# Usage:
+#   docker compose up -d          # start both databases
+#   docker compose ps             # check status
+#   docker compose logs -f        # tail logs
+#   docker compose down           # stop and remove containers
+#   docker compose down -v        # stop and remove containers + volumes
+#
+# Prerequisites:
+#   - Docker Desktop (or Docker Engine + Compose plugin) installed
+#   - Ports 7687 and 8529 must be free on your machine
+#
+# After starting:
+#   - FalkorDB : bolt://localhost:7687  (no auth by default)
+#   - ArangoDB : http://localhost:8529  (root / benchmark123)
+# =============================================================================
+
+version: "3.9"
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # FalkorDB
+  # Redis-based graph database that speaks the Bolt protocol.
+  # Compatible with the Neo4j Java driver — just point it at bolt://localhost:7687
+  #
+  # Image: falkordb/falkordb (official Docker Hub image)
+  # Port 7687: Bolt protocol (same as Neo4j)
+  # Port 6379: Redis protocol (not used in this benchmark)
+  #
+  # Memory cap: 256 MB to match CognoDB c0 free tier.
+  # CPU cap:    0.5 vCPU to match CognoDB c0 burstable tier.
+  # ---------------------------------------------------------------------------
+  falkordb:
+    image: falkordb/falkordb:latest
+    container_name: falkordb-benchmark
+    ports:
+      - "7687:7687"   # Bolt — used by Neo4j Java driver
+      - "6379:6379"   # Redis — exposed for optional redis-cli inspection
+    environment:
+      # FalkorDB runs as Redis — set max memory to cap resource usage
+      - REDIS_ARGS=--maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - falkordb_data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6379", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # ArangoDB Community Edition
+  # Multi-model graph + document database.
+  # REST API on port 8529 — used directly via Java HttpClient (no driver needed).
+  #
+  # Image: arangodb:3.12 (pinned for reproducibility)
+  # Port 8529: ArangoDB REST API + Web UI
+  #
+  # Memory cap: 256 MB to match CognoDB c0 free tier.
+  # CPU cap:    0.5 vCPU to match CognoDB c0 burstable tier.
+  #
+  # Root password is set via ARANGO_ROOT_PASSWORD.
+  # This matches the ARANGODB_PASSWORD value in your .env file.
+  # ---------------------------------------------------------------------------
+  arangodb:
+    image: arangodb:3.12
+    container_name: arangodb-benchmark
+    ports:
+      - "8529:8529"   # REST API + Web UI
+    environment:
+      - ARANGO_ROOT_PASSWORD=benchmark123
+    volumes:
+      - arangodb_data:/var/lib/arangodb3
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8529/_api/version"]
+      interval: 15s
+      timeout: 10s
+      retries: 6
+      start_period: 30s
+
+# -----------------------------------------------------------------------------
+# Named volumes
+# Each is effectively capped to 1 GB by the available disk on your machine.
+# ArangoDB and FalkorDB will fail gracefully before exceeding available space.
+# -----------------------------------------------------------------------------
+volumes:
+  falkordb_data:
+    driver: local
+  arangodb_data:
+    driver: local
