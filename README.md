@@ -75,31 +75,38 @@ Optional:
 
 ## Build And Run
 
+Run commands from the repository root (`cognodb-benchmark`).
+
+Build:
+
+```bash
+./mvnw clean package
+```
+
 ```powershell
-cd D:\Karan_Practice_Java\congnodb-benchmark-new\cognodb-benchmark
-mvn clean package
+.\mvnw.cmd clean package
 ```
 
 Download/prepare dataset:
 
-```powershell
-java -cp target\cognodb-benchmark-1.0.0.jar ai.graphdb.benchmark.Main --download
+```bash
+java -cp target/cognodb-benchmark-1.0.0.jar ai.graphdb.benchmark.Main --download
 ```
 
 Run full active suite:
 
-```powershell
-java -cp target\cognodb-benchmark-1.0.0.jar ai.graphdb.benchmark.Main --all
+```bash
+java -cp target/cognodb-benchmark-1.0.0.jar ai.graphdb.benchmark.Main --all
 ```
 
 Run a single database:
 
-```powershell
-java -cp target\cognodb-benchmark-1.0.0.jar ai.graphdb.benchmark.Main --db cognodb
-java -cp target\cognodb-benchmark-1.0.0.jar ai.graphdb.benchmark.Main --db neo4j
-java -cp target\cognodb-benchmark-1.0.0.jar ai.graphdb.benchmark.Main --db falkor
-java -cp target\cognodb-benchmark-1.0.0.jar ai.graphdb.benchmark.Main --db arango
-java -cp target\cognodb-benchmark-1.0.0.jar ai.graphdb.benchmark.Main --db tigergraph
+```bash
+java -cp target/cognodb-benchmark-1.0.0.jar ai.graphdb.benchmark.Main --db cognodb
+java -cp target/cognodb-benchmark-1.0.0.jar ai.graphdb.benchmark.Main --db neo4j
+java -cp target/cognodb-benchmark-1.0.0.jar ai.graphdb.benchmark.Main --db falkor
+java -cp target/cognodb-benchmark-1.0.0.jar ai.graphdb.benchmark.Main --db arango
+java -cp target/cognodb-benchmark-1.0.0.jar ai.graphdb.benchmark.Main --db tigergraph
 ```
 
 Outputs are written to:
