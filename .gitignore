@@ -31,3 +31,5 @@ Thumbs.db
 # results/
 /bin/
 /.settings/
+/data/
+/results/
